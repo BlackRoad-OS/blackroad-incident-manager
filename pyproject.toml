@@ -1,3 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "blackroad-incident-manager"
+version = "1.0.0"
+description = "Production-grade incident management: P1–P4 severity, SLA enforcement, MTTR analytics, and postmortem generation."
+readme = "README.md"
+license = { text = "Proprietary" }
+requires-python = ">=3.10"
+authors = [{ name = "BlackRoad OS, Inc.", email = "eng@blackroad.io" }]
+keywords = ["incident-management", "sla", "mttr", "postmortem", "devops", "sre"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: System :: Monitoring",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.optional-dependencies]
+ui = ["rich>=13"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.4"]
+
+[project.scripts]
+blackroad-incidents = "incident_manager:main"
+
+[project.urls]
+Homepage = "https://blackroad.io"
+Repository = "https://github.com/BlackRoad-OS/blackroad-incident-manager"
+"Bug Tracker" = "https://github.com/BlackRoad-OS/blackroad-incident-manager/issues"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
