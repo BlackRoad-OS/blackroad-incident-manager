@@ -1,10 +1,29 @@
 # BlackRoad Incident Manager
 
 [![CI](https://github.com/BlackRoad-OS/blackroad-incident-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackRoad-OS/blackroad-incident-manager/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/blackroad-incident-manager.svg)](https://pypi.org/project/blackroad-incident-manager/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: Proprietary](https://img.shields.io/badge/license-Proprietary-red.svg)](https://blackroad.io)
 
 Production-grade incident management system for engineering teams. Track P1–P4 incidents, enforce SLA policies, compute MTTR analytics, and auto-generate postmortem documents — all from a single Python module backed by SQLite.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Severity Matrix](#severity-matrix)
+- [SLA Targets](#sla-targets)
+- [Installation](#installation)
+- [CLI Usage](#cli-usage)
+- [Python API](#python-api)
+- [Stripe & Billing Incident Handling](#stripe--billing-incident-handling)
+- [Postmortem Example Output](#postmortem-example-output)
+- [Architecture](#architecture)
+- [Running Tests](#running-tests)
+- [End-to-End (E2E) Tests](#end-to-end-e2e-tests)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -51,20 +70,27 @@ SLA breach detection runs in real time against these defaults and is surfaced in
 
 ## Installation
 
+### Via pip (recommended)
+
 ```bash
-# Clone
-git clone https://github.com/BlackRoad-OS/blackroad-incident-manager.git
-cd blackroad-incident-manager
-
-# Optional: install rich for coloured terminal output
-pip install rich
-
-# Run tests
-pip install pytest
-pytest tests/ -v
+pip install blackroad-incident-manager
 ```
 
-No build step required. `incident_manager.py` uses only the Python standard library (+ optional `rich`).
+### With rich terminal UI
+
+```bash
+pip install "blackroad-incident-manager[ui]"
+```
+
+### From source
+
+```bash
+git clone https://github.com/BlackRoad-OS/blackroad-incident-manager.git
+cd blackroad-incident-manager
+pip install -e ".[ui,dev]"
+```
+
+No build step required for source usage. `incident_manager.py` uses only the Python standard library (+ optional `rich` for coloured output).
 
 ---
 
@@ -274,7 +300,92 @@ pip install pytest pytest-cov
 pytest tests/ -v --cov=incident_manager --cov-report=term-missing
 ```
 
-Expected: **50+ assertions** across 40 tests covering creation, lifecycle, timeline, MTTR, SLA breach, escalation, postmortem, export, dashboard, and filtering.
+Expected: **59 assertions** across 40+ tests covering creation, lifecycle, timeline, MTTR, SLA breach, escalation, postmortem, export, dashboard, and filtering.
+
+---
+
+## End-to-End (E2E) Tests
+
+End-to-end tests exercise the full incident lifecycle through the public API — from incident creation to postmortem generation — exactly as a production caller would:
+
+```bash
+pytest tests/ -v -k "lifecycle or postmortem or export"
+```
+
+Key E2E scenarios covered:
+
+| Scenario | Test Class | What Is Verified |
+|----------|-----------|------------------|
+| Full P1 lifecycle | `TestStatusTransitions::test_full_lifecycle` | open → investigating → mitigating → resolved; `resolved_at` set |
+| MTTR computation | `TestMTTRCalculation::test_mttr_calculated_on_resolve` | MTTR ≥ 0 minutes after resolve |
+| SLA breach detection | `TestSLABreach` | Response & resolution windows enforced per severity |
+| Escalation flow | `TestEscalation::test_escalate_adds_timeline_event` | Severity promoted; immutable audit trail appended |
+| Postmortem generation | `TestPostmortem::test_postmortem_contains_required_sections` | All required sections present in generated document |
+| JSON & Markdown export | `TestReportExport` | Valid JSON schema; Markdown headings present |
+| Dashboard snapshot | `TestDashboard::test_dashboard_counts_open` | Accurate open/resolved counts and SLA breach tally |
+
+Run the full E2E suite with coverage report:
+
+```bash
+pytest tests/ -v --cov=incident_manager --cov-report=term-missing --cov-report=html
+```
+
+Coverage reports are written to `htmlcov/index.html`.
+
+---
+
+## Stripe & Billing Incident Handling
+
+BlackRoad Incident Manager integrates naturally with **Stripe webhook events** to auto-create billing incidents before engineers are even paged. Configure your Stripe webhook handler to call the Python API:
+
+```python
+from incident_manager import IncidentManager, EventType
+
+mgr = IncidentManager()
+
+# Triggered by Stripe webhook: charge.failed / payment_intent.payment_failed
+def handle_stripe_payment_failure(event: dict) -> None:
+    payload = event["data"]["object"]
+    amount  = payload.get("amount", 0) / 100  # cents → dollars
+    cust    = payload.get("customer", "unknown")
+
+    severity = "P1" if amount >= 10_000 else "P2"
+
+    inc = mgr.create_incident(
+        title=f"Stripe payment failure — ${amount:.2f} (customer {cust})",
+        severity=severity,
+        affected_services=["billing", "stripe-gateway"],
+        description=(
+            f"Stripe event {event['id']}: {event['type']}. "
+            f"Customer: {cust}. Amount: ${amount:.2f}."
+        ),
+        assignee="billing-oncall",
+    )
+
+    mgr.add_timeline_entry(
+        inc.id,
+        EventType.EXTERNAL_LINK.value,
+        f"Stripe Dashboard — event {event['id']}",
+        "stripe-webhook",
+        metadata={"url": f"https://dashboard.stripe.com/events/{event['id']}"},
+    )
+
+    return inc.id
+
+# Triggered by Stripe webhook: invoice.payment_succeeded (recovery)
+def handle_stripe_payment_recovery(event: dict, incident_id: str) -> None:
+    mgr.resolve(incident_id, "Stripe payment recovered successfully.", actor="stripe-webhook")
+```
+
+**Recommended SLA mapping for Stripe events:**
+
+| Stripe Event | Suggested Severity | Response SLA | Resolution SLA |
+|---|---|---|---|
+| `charge.failed` (≥ $10,000) | P1 | 15 min | 1 hour |
+| `charge.failed` (< $10,000) | P2 | 30 min | 4 hours |
+| `invoice.payment_failed` | P2 | 30 min | 4 hours |
+| `payout.failed` | P1 | 15 min | 1 hour |
+| `customer.subscription.deleted` | P3 | 2 hours | 24 hours |
 
 ---
 
